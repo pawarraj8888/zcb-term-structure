@@ -26,7 +26,8 @@ PRICE_COLUMNS = {"ask": "ask_price", "bid": "bid_price", "mid": "mid_price"}
 # 50 bp yield error.
 DEFAULT_MIN_YEARS_IN_FIT = 0.25
 
-# US federal holidays that can fall on a regular Treasury settlement day near our data.
+# SIFMA bond-market holidays for the rest of 2026 (the data is a Sep 2026 quote sheet).
+# Extend this set before using the settlement helper on quote sheets from other years.
 US_MARKET_HOLIDAYS = {
     date(2026, 9, 7),   # Labor Day 2026
     date(2026, 10, 12),  # Columbus Day 2026
@@ -107,7 +108,9 @@ def prepare_bonds(
                 times=np.asarray(schedule.times),
                 amounts=np.asarray(schedule.amounts),
                 market_dirty_price=dirty,
-                weight=1.0 / duration,
+                # (P_model - P_mkt) / (P_mkt x D_mod) is the first-order yield error, so the
+                # least-squares objective is the sum of squared yield errors (slide 31).
+                weight=1.0 / (dirty * duration),
             )
         )
     table = pd.DataFrame(rows)
@@ -253,9 +256,9 @@ def profile_beta0(bonds: PreparedBonds, grid=BETA0_PROFILE_GRID) -> pd.DataFrame
 
 
 def _approx_yield_errors_bp(bonds: PreparedBonds, params: np.ndarray) -> np.ndarray:
-    """First-order yield error: (model - market dirty price) / (dirty price x duration)."""
+    """First-order yield error: (model - market dirty price) / (dirty price x duration) = weighted residual."""
     errors = []
     for b in bonds.pricing_inputs:
         model_dirty = float(np.dot(b.amounts, discount_factor(b.times, params)))
-        errors.append((model_dirty - b.market_dirty_price) * b.weight / b.market_dirty_price)
+        errors.append((model_dirty - b.market_dirty_price) * b.weight)
     return np.asarray(errors) * BASIS_POINTS

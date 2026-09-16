@@ -63,7 +63,8 @@ def plot_zero_curve(bond_table: pd.DataFrame, params: np.ndarray, quote_date: da
                    edgecolors=MUTED, linewidths=1.0, label=f"Excluded < 3 months ({len(dropped)})", zorder=2)
     ax.plot(grid, zero, color=BLUE, linewidth=2.0, label="Zero-coupon rate r(t), continuous", zorder=3)
     ax.plot(grid, fwd, color=ORANGE, linewidth=2.0, linestyle=(0, (5, 3)), label="Instantaneous forward f(t)", zorder=3)
-    ax.annotate(f"r(30y) = {zero[-1]:.2f}%", xy=(grid[-1], zero[-1]), xytext=(6, 0), textcoords="offset points",
+    r30 = float(svensson_zero(30.0, *params) * 100.0)
+    ax.annotate(f"r(30y) = {r30:.2f}%", xy=(30.0, r30), xytext=(8, -2), textcoords="offset points",
                 va="center", fontsize=9, color=INK_SECONDARY)
     ax.set_xlabel("Years from settlement")
     ax.set_ylabel("Rate (% per year)")

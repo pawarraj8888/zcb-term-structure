@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Build the Excel implementation of Miniproject 2 with live formulas.
+"""Build the Excel implementation of Miniproject 2 (live formulas, Solver-ready).
 
-The workbook re-derives everything from the raw WSJ quotes with Excel's own
-bond functions (COUPPCD/COUPNCD/COUPDAYBS/COUPDAYS/YIELD/MDURATION) and prices
-every bond off the Svensson curve whose six parameters sit on the Inputs sheet.
-Solver can be run on the SSE cell; the parameters are pre-loaded with the
-Python optimum so the workbook opens at the fitted solution.
+Layout (the way the workbook would be built by hand in Excel):
+    Data       WSJ quotes exactly as downloaded
+    Bonds      one row per bond: 32nds conversion, coupon dates, accrued, YIELD, duration,
+               model price, errors
+    CashFlows  every remaining coupon/principal date of every bond and its present value
+    Curve      Svensson parameters, Solver objective, fit statistics, zero-rate table, chart
+    Notes      one-page methodology
 
     python build_excel.py --data ../data/Treasury_data_090426.xlsx \
         --results ../output/results.json --out ../excel/Miniproject2_ZCB_Term_Structure.xlsx
@@ -27,426 +29,395 @@ from openpyxl.workbook.defined_name import DefinedName
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from zcb import load_wsj_quotes  # noqa: E402
 
-TITLE = "Miniproject 2 - Creating a ZCB Term Structure"
-COURSE = "FRE 6103 Valuation for Financial Engineering (NYU Tandon), Prof. David Shimko"
-AUTHOR = "Raj Pawar"
 LABOR_DAY_2026 = date(2026, 9, 7)
 
-HEADER_FILL = PatternFill("solid", fgColor="1F3A5F")
-INPUT_FILL = PatternFill("solid", fgColor="FFF4CE")
-NOTE_FILL = PatternFill("solid", fgColor="EEF3FA")
-HEADER_FONT = Font(bold=True, color="FFFFFF")
+# --- layout constants shared with verify_excel.py ---------------------------------
+DATA_HEADER_ROW = 6
+DATA_FIRST_ROW = 7
+BOND_HEADER_ROW = 7
+BOND_FIRST_ROW = 8
+CURVE_PARAM_FIRST_ROW = 4          # Curve!B4:B9 = beta_0 .. tau_2
+CURVE_SSE_CELL = "B11"
+CURVE_STATS = {"n_used": "B12", "price_rmse": "B13", "yield_rmse": "B14", "yield_mae": "B15", "yield_max": "B16"}
+CURVE_TABLE_HEADER_ROW = 21
+CURVE_TABLE_FIRST_ROW = 22
+CF_DATE_FIRST_COL = 5              # CashFlows!E = date of coupon 1
+BOND_COLS = {
+    "maturity": "A", "coupon": "B", "bid": "C", "ask": "D", "wsj_yield": "E", "clean": "F", "prev": "G",
+    "next": "H", "days_acc": "I", "days_period": "J", "accrued": "K", "dirty": "L", "ytm": "M", "ytm_diff": "N",
+    "duration": "O", "n_coupons": "P", "years": "Q", "use": "R", "model_dirty": "S", "model_clean": "T",
+    "price_err": "U", "model_ytm": "V", "yield_err": "W", "w_err": "X", "w_sq": "Y",
+}
+PARAM_NAMES = ["beta_0", "beta_1", "beta_2", "beta_3", "tau_1", "tau_2"]
+PARAM_KEYS = ["beta0", "beta1", "beta2", "beta3", "tau1", "tau2"]
+
+# --- plain Excel styling ------------------------------------------------------------
+HEADER_FILL = PatternFill("solid", fgColor="DDEBF7")
+INPUT_FILL = PatternFill("solid", fgColor="FFF2CC")
 BOLD = Font(bold=True)
-TITLE_FONT = Font(bold=True, size=16, color="1F3A5F")
-THIN = Side(style="thin", color="C3C2B7")
-BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+TITLE = Font(bold=True, size=14)
+THIN = Side(style="thin", color="BFBFBF")
+BOTTOM = Border(bottom=THIN)
 WRAP = Alignment(wrap_text=True, vertical="top")
+CENTER_WRAP = Alignment(wrap_text=True, vertical="center", horizontal="center")
+DATE_FMT = "m/d/yyyy"
 
-DATE_FMT = "yyyy-mm-dd"
-PCT3 = "0.000"
-PX = "0.0000"
-
-FIRST_ROW = 4  # first bond row on Bonds / CashFlows
-
-# Svensson zero rate and forward as Excel formula fragments with {t} substituted.
-# Defined names for the parameters. They must not look like cell references
-# (Excel would read "tau1" as column TAU, row 1), hence the Sv_ prefix.
-NAME_OF = {"beta0": "Sv_beta0", "beta1": "Sv_beta1", "beta2": "Sv_beta2", "beta3": "Sv_beta3",
-           "tau1": "Sv_tau1", "tau2": "Sv_tau2"}
 ZERO_FORMULA = (
-    "Sv_beta0+Sv_beta1*(1-EXP(-{t}/Sv_tau1))/({t}/Sv_tau1)"
-    "+Sv_beta2*((1-EXP(-{t}/Sv_tau1))/({t}/Sv_tau1)-EXP(-{t}/Sv_tau1))"
-    "+Sv_beta3*((1-EXP(-{t}/Sv_tau2))/({t}/Sv_tau2)-EXP(-{t}/Sv_tau2))"
+    "beta_0+beta_1*(1-EXP(-{t}/tau_1))/({t}/tau_1)"
+    "+beta_2*((1-EXP(-{t}/tau_1))/({t}/tau_1)-EXP(-{t}/tau_1))"
+    "+beta_3*((1-EXP(-{t}/tau_2))/({t}/tau_2)-EXP(-{t}/tau_2))"
 )
 FORWARD_FORMULA = (
-    "Sv_beta0+Sv_beta1*EXP(-{t}/Sv_tau1)+Sv_beta2*({t}/Sv_tau1)*EXP(-{t}/Sv_tau1)"
-    "+Sv_beta3*({t}/Sv_tau2)*EXP(-{t}/Sv_tau2)"
+    "beta_0+beta_1*EXP(-{t}/tau_1)+beta_2*({t}/tau_1)*EXP(-{t}/tau_1)+beta_3*({t}/tau_2)*EXP(-{t}/tau_2)"
 )
 
 
-def header(ws, row: int, labels: list[str], start_col: int = 1) -> None:
+def header(ws, row: int, labels: list[str], start_col: int = 1, height: float | None = None) -> None:
     for offset, label in enumerate(labels):
         cell = ws.cell(row=row, column=start_col + offset, value=label)
+        cell.font = BOLD
         cell.fill = HEADER_FILL
-        cell.font = HEADER_FONT
-        cell.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
-        cell.border = BOX
+        cell.border = BOTTOM
+        cell.alignment = CENTER_WRAP
+    if height:
+        ws.row_dimensions[row].height = height
 
 
-def set_widths(ws, widths: dict[str, float]) -> None:
-    for col, width in widths.items():
+def widths(ws, spec: dict[str, float]) -> None:
+    for col, width in spec.items():
         ws.column_dimensions[col].width = width
 
 
-def add_name(wb: Workbook, name: str, ref: str) -> None:
-    wb.defined_names[name] = DefinedName(name, attr_text=ref)
+def name(wb: Workbook, label: str, ref: str) -> None:
+    wb.defined_names[label] = DefinedName(label, attr_text=ref)
+
+
+def as_dt(day: date | str) -> datetime:
+    if isinstance(day, str):
+        day = date.fromisoformat(day)
+    return datetime.combine(day, datetime.min.time())
 
 
 # ----------------------------------------------------------------------------- sheets
-def build_cover(wb: Workbook, results: dict) -> None:
+def build_data(wb: Workbook, quotes, quote_date: date) -> None:
     ws = wb.active
-    ws.title = "Cover"
-    ws["B2"] = TITLE
-    ws["B2"].font = TITLE_FONT
-    ws["B3"] = COURSE
-    ws["B4"] = f"{AUTHOR}  |  Data: WSJ / Tullett Prebon Treasury notes & bonds, {results['quote_date']}"
-    lines = [
-        ("What this workbook does",
-         "Fits a continuously compounded zero-coupon (ZCB) term structure to all US Treasury note and bond "
-         "quotes using the Svensson (1994) functional form, then reports the discount rate r(t) and discount "
-         "factor d(t) = exp(-r(t) t) for every Treasury payment date (coupons and principal)."),
-        ("Sheet map",
-         "Inputs: dates, Svensson parameters, objective (weighted SSE) and fit statistics. Solver runs here.\n"
-         "Data: raw WSJ quotes exactly as downloaded.\n"
-         "Bonds: one row per bond - 32nds conversion, coupon dates (COUPPCD/COUPNCD), accrued interest, dirty price, street yield (Excel YIELD), "
-         "duration, model price off the curve, price and yield errors.\n"
-         "CashFlows: every remaining coupon/principal date of every bond, its zero rate and present value.\n"
-         "ZeroCurve: the deliverable - r(t), d(t) and instantaneous forward f(t) at every payment date, with chart.\n"
-         "Robustness: convention check, Nelson-Siegel benchmark and beta0 profile (values computed by the Python implementation).\n"
-         "Methodology: the one-page write-up."),
-        ("Live formulas",
-         "Everything on Bonds, CashFlows and ZeroCurve is a formula. Change a parameter on Inputs and all "
-         "model prices, errors and the curve update. Values on Data and Robustness are inputs/records."),
-        ("Re-running the fit with Solver",
-         "Data > Solver. Set Objective: Inputs!$B$21 (weighted SSE) to Min. By Changing: Inputs!$B$13:$B$18. "
-         "Subject to: $B$13 >= 0, $B$17 >= 0.05, $B$18 >= 0.05. Method: GRG Nonlinear; untick 'Make Unconstrained "
-         "Variables Non-Negative' (beta1..beta3 may be negative). The pre-loaded parameters are already the optimum "
-         "found by the Python implementation (multi-start least squares), so Solver should not move them materially."),
-        ("Companion Python implementation",
-         "github.com/pawarraj8888/zcb-term-structure - identical conventions; the Excel SSE and every model price "
-         "reproduce the Python numbers."),
-    ]
-    row = 6
-    for heading, text in lines:
-        ws.cell(row=row, column=2, value=heading).font = BOLD
-        cell = ws.cell(row=row + 1, column=2, value=text)
-        cell.alignment = WRAP
-        ws.merge_cells(start_row=row + 1, start_column=2, end_row=row + 1, end_column=8)
-        ws.row_dimensions[row + 1].height = 15 * (text.count("\n") + 1 + len(text) // 130)
-        row += 3
-    set_widths(ws, {"A": 2, "B": 24, "C": 16, "D": 16, "E": 16, "F": 16, "G": 16, "H": 16})
-
-
-def build_inputs(wb: Workbook, results: dict) -> None:
-    ws = wb.create_sheet("Inputs")
-    ws["B2"] = "Inputs and fit"
-    ws["B2"].font = TITLE_FONT
-    labels = [
-        (4, "Quote date (WSJ)", datetime.fromisoformat(results["quote_date"]), DATE_FMT, True),
-        (5, "Market holiday (Labor Day)", datetime.combine(LABOR_DAY_2026, datetime.min.time()), DATE_FMT, True),
-        (6, "Settlement date (T+1 business)", "=WORKDAY(B4,1,B5)", DATE_FMT, False),
-        (7, "Face value", 100, "0", True),
-        (8, "Coupons per year", 2, "0", True),
-        (9, "Days per year (continuous time)", 365, "0", True),
-        (10, "Min years to maturity in fit", results["svensson"]["min_years_in_fit"], "0.00", True),
-    ]
-    for row, label, value, fmt, is_input in labels:
-        ws.cell(row=row, column=1, value=label)
-        cell = ws.cell(row=row, column=2, value=value)
-        cell.number_format = fmt
-        if is_input:
-            cell.fill = INPUT_FILL
-        cell.border = BOX
-    ws["A12"] = "Svensson parameters (continuous zero rate, decimals)"
-    ws["A12"].font = BOLD
-    params = results["svensson"]["params"]
-    names = ["beta0", "beta1", "beta2", "beta3", "tau1", "tau2"]
-    descriptions = {
-        "beta0": "level: r(t) as t -> infinity",
-        "beta1": "slope: r(0) = beta0 + beta1",
-        "beta2": "first hump, decay tau1",
-        "beta3": "second hump, decay tau2",
-        "tau1": "decay (years) of slope/first hump",
-        "tau2": "decay (years) of second hump",
-    }
-    for i, name in enumerate(names):
-        row = 13 + i
-        ws.cell(row=row, column=1, value=name)
-        cell = ws.cell(row=row, column=2, value=float(params[name]))
-        cell.number_format = "0.000000"
-        cell.fill = INPUT_FILL
-        cell.border = BOX
-        ws.cell(row=row, column=3, value=descriptions[name])
-        add_name(wb, NAME_OF[name], f"Inputs!$B${row}")
-    add_name(wb, "Settle", "Inputs!$B$6")
-    add_name(wb, "MinYears", "Inputs!$B$10")
-
-    last = FIRST_ROW + results["svensson"]["n_bonds_total"] - 1
-    stats = [
-        (20, "Fit objective and statistics (bonds with In fit = 1)", None, None),
-        (21, "Weighted SSE  = SUM( InFit x ((Pmodel - Pmkt) / ModDuration)^2 )", f"=SUM(Bonds!AA{FIRST_ROW}:AA{last})", "0.000000"),
-        (22, "Bonds in fit", f"=SUM(Bonds!S{FIRST_ROW}:S{last})", "0"),
-        (23, "Bonds total", f"=COUNT(Bonds!B{FIRST_ROW}:B{last})", "0"),
-        (24, "Price RMSE (per 100 face)", f"=SQRT(SUMPRODUCT(Bonds!S{FIRST_ROW}:S{last},Bonds!V{FIRST_ROW}:V{last},Bonds!V{FIRST_ROW}:V{last})/B22)", "0.0000"),
-        (25, "Yield RMSE (bp)", f"=SQRT(SUMPRODUCT(Bonds!S{FIRST_ROW}:S{last},Bonds!X{FIRST_ROW}:X{last},Bonds!X{FIRST_ROW}:X{last})/B22)", "0.00"),
-        (26, "Yield MAE (bp)", f"=SUMPRODUCT(Bonds!S{FIRST_ROW}:S{last},ABS(Bonds!X{FIRST_ROW}:X{last}))/B22", "0.00"),
-        (27, "Max |yield error| (bp)", f"=MAX(INDEX(Bonds!S{FIRST_ROW}:S{last}*ABS(Bonds!X{FIRST_ROW}:X{last}),0))", "0.00"),
-        (28, "r(0) = beta0 + beta1 (%)", "=(Sv_beta0+Sv_beta1)*100", PCT3),
-        (29, "r(30y) (%)", "=(" + ZERO_FORMULA.format(t="30") + ")*100", PCT3),
-    ]
-    for row, label, formula, fmt in stats:
-        ws.cell(row=row, column=1, value=label).font = BOLD if formula is None else Font()
-        if formula is not None:
-            cell = ws.cell(row=row, column=2, value=formula)
-            cell.number_format = fmt
-            cell.border = BOX
-    add_name(wb, "Weighted_SSE", "Inputs!$B$21")
-
-    ws["A31"] = "Solver set-up"
-    ws["A31"].font = BOLD
-    ws["A32"] = ("Objective: $B$21 -> Min.  Changing cells: $B$13:$B$18.  Constraints: $B$13 >= 0, $B$17 >= 0.05, $B$18 >= 0.05.  "
-                 "GRG Nonlinear; untick 'Make Unconstrained Variables Non-Negative'.")
-    ws["A32"].alignment = WRAP
-    ws.merge_cells("A32:E33")
-    ws["A35"] = "Yellow cells are inputs; everything else is calculated."
-    ws["A35"].fill = INPUT_FILL
-    set_widths(ws, {"A": 62, "B": 18, "C": 34})
-
-
-def build_data(wb: Workbook, quotes) -> None:
-    ws = wb.create_sheet("Data")
-    ws["A1"] = "U.S. Treasury Quotes - Treasury Notes & Bonds (WSJ, source Tullett Prebon). Prices in 32nds; third decimal = eighths of a 32nd."
-    header(ws, 2, ["Maturity", "Coupon", "Bid", "Asked", "Chg", "Asked yield"])
+    ws.title = "Data"
+    ws["A1"] = "U.S. Treasury Quotes"
+    ws["A1"].font = TITLE
+    ws["A2"] = quote_date.strftime("%A, %B %d, %Y")
+    ws["A3"] = "Treasury Notes & Bonds (Wall Street Journal, source Tullett Prebon)"
+    ws["A4"] = "Bid/Asked are in 32nds; the third decimal is eighths of a 32nd (e.g. 99.256 = 99 + 25 6/8 32nds)."
+    header(ws, DATA_HEADER_ROW, ["Maturity", "Coupon", "Bid", "Asked", "Chg", "Asked yield"])
     for i, q in enumerate(quotes.itertuples(index=False)):
-        row = 3 + i
-        ws.cell(row=row, column=1, value=datetime.combine(q.maturity, datetime.min.time())).number_format = DATE_FMT
-        ws.cell(row=row, column=2, value=q.coupon).number_format = PCT3
-        ws.cell(row=row, column=3, value=q.bid_quote).number_format = PCT3
-        ws.cell(row=row, column=4, value=q.ask_quote).number_format = PCT3
-        ws.cell(row=row, column=5, value=q.chg)
-        ws.cell(row=row, column=6, value=q.asked_yield).number_format = PCT3
-    ws.freeze_panes = "A3"
-    set_widths(ws, {"A": 12, "B": 9, "C": 9, "D": 9, "E": 8, "F": 11})
+        r = DATA_FIRST_ROW + i
+        ws.cell(row=r, column=1, value=as_dt(q.maturity)).number_format = DATE_FMT
+        ws.cell(row=r, column=2, value=q.coupon).number_format = "0.000"
+        ws.cell(row=r, column=3, value=q.bid_quote).number_format = "0.000"
+        ws.cell(row=r, column=4, value=q.ask_quote).number_format = "0.000"
+        ws.cell(row=r, column=5, value=q.chg)
+        ws.cell(row=r, column=6, value=q.asked_yield).number_format = "0.000"
+    ws.freeze_panes = f"A{DATA_FIRST_ROW}"
+    widths(ws, {"A": 12, "B": 9, "C": 9, "D": 9, "E": 8, "F": 11})
 
 
-BOND_COLUMNS = [
-    ("#", 5), ("Maturity", 11), ("Coupon %", 8), ("Bid (WSJ)", 9), ("Ask (WSJ)", 9), ("WSJ asked yield %", 10),
-    ("Ask clean price (decimal)", 12), ("Previous coupon", 11), ("Next coupon", 11), ("Days accrued (settle - prev)", 8),
-    ("Days in period (next - prev)", 8), ("Accrued interest", 10), ("Dirty price", 11), ("Street yield % (Excel YIELD)", 11),
-    ("Yield check vs WSJ (bp)", 9), ("Modified duration", 9), ("Remaining cash flows", 8), ("Years to maturity", 9),
-    ("In fit (1/0)", 6), ("Model dirty price", 11), ("Model clean price", 11), ("Price error (model - mkt)", 10),
-    ("Model yield %", 10), ("Yield error (bp)", 9), ("Weight = 1 / duration", 9), ("Weighted residual", 10),
-    ("Weighted sq. residual (in fit)", 11),
-]
-
-
-def build_bonds(wb: Workbook, n_bonds: int, n_flow_cols: int) -> None:
+def build_bonds(wb: Workbook, results: dict, n_bonds: int, n_cols: int) -> None:
     ws = wb.create_sheet("Bonds")
-    ws["A1"] = ("Per-bond mechanics with Excel bond functions (basis 1 = actual/actual, frequency 2). Coupon-period days are taken as "
-                "COUPNCD - COUPPCD because COUPDAYS(basis 1) mis-states some month-end periods (183 vs 184 days). Model prices come from the CashFlows sheet.")
-    header(ws, 3, [c[0] for c in BOND_COLUMNS])
-    ws.row_dimensions[3].height = 45
-    pv_first = get_column_letter(6 + 2 * n_flow_cols + 2)  # PV grid start on CashFlows
-    pv_last = get_column_letter(6 + 3 * n_flow_cols + 1)
+    ws["A1"] = "Bond-by-bond calculations"
+    ws["A1"].font = TITLE
+    ws["A2"] = "Quote date"
+    ws["B2"] = as_dt(results["quote_date"])
+    ws["A3"] = "Settlement date (T+1 business day)"
+    ws["B3"] = "=WORKDAY(B2,1,B4)"
+    ws["A4"] = "Market holiday (Labor Day)"
+    ws["B4"] = as_dt(LABOR_DAY_2026)
+    ws["A5"] = "Exclude bonds with less than this many years to maturity from the fit"
+    ws["B5"] = results["svensson"]["min_years_in_fit"]
+    for ref in ("B2", "B3", "B4", "B5"):
+        ws[ref].number_format = DATE_FMT if ref != "B5" else "0.00"
+    for ref in ("B2", "B4", "B5"):
+        ws[ref].fill = INPUT_FILL
+    name(wb, "Settle", "Bonds!$B$3")
+    name(wb, "MinYears", "Bonds!$B$5")
+
+    labels = [
+        "Maturity", "Coupon (%)", "Bid (32nds)", "Asked (32nds)", "WSJ asked yield (%)", "Asked price (decimal)",
+        "Previous coupon", "Next coupon", "Days accrued", "Days in period", "Accrued interest", "Dirty price",
+        "YTM (%) from YIELD()", "YTM - WSJ (bp)", "Modified duration", "Coupons left", "Years to maturity",
+        "Use in fit (1/0)", "Model dirty price", "Model clean price", "Price error", "Model YTM (%)",
+        "Yield error (bp)", "Approx. yield error = price error / (dirty x duration)", "Squared, if used",
+    ]
+    header(ws, BOND_HEADER_ROW, labels, height=44)
+    pv_first = get_column_letter(CF_DATE_FIRST_COL + n_cols + 1)
+    pv_last = get_column_letter(CF_DATE_FIRST_COL + 2 * n_cols)
+    C = BOND_COLS
+    fmt = {
+        "maturity": DATE_FMT, "coupon": "0.000", "bid": "0.000", "ask": "0.000", "wsj_yield": "0.000",
+        "clean": "0.0000", "prev": DATE_FMT, "next": DATE_FMT, "accrued": "0.0000", "dirty": "0.0000",
+        "ytm": "0.000", "ytm_diff": "0.00", "duration": "0.000", "years": "0.000", "model_dirty": "0.0000",
+        "model_clean": "0.0000", "price_err": "0.0000", "model_ytm": "0.000", "yield_err": "0.00",
+        "w_err": "0.00000", "w_sq": "0.0000000",
+    }
     for i in range(n_bonds):
-        r = FIRST_ROW + i
-        d = 3 + i  # Data row
-        t = f"R{r}"
+        r = BOND_FIRST_ROW + i
+        d = DATA_FIRST_ROW + i
         formulas = {
-            "A": i + 1,
-            "B": f"=Data!A{d}",
-            "C": f"=Data!B{d}",
-            "D": f"=Data!C{d}",
-            "E": f"=Data!D{d}",
-            "F": f"=Data!F{d}",
-            "G": f'=INT(E{r})+(VALUE(MID(TEXT(E{r},"0.000"),FIND(".",TEXT(E{r},"0.000"))+1,2))+VALUE(RIGHT(TEXT(E{r},"0.000"),1))/8)/32',
-            "H": f"=COUPPCD(Settle,B{r},2,1)",
-            "I": f"=COUPNCD(Settle,B{r},2,1)",
-            "J": f"=Settle-H{r}",
-            "K": f"=I{r}-H{r}",
-            "L": f"=C{r}/2*J{r}/K{r}",
-            "M": f"=G{r}+L{r}",
-            "N": f"=YIELD(Settle,B{r},C{r}/100,G{r},100,2,1)*100",
-            "O": f"=(N{r}-F{r})*100",
-            "P": f"=MDURATION(Settle,B{r},C{r}/100,N{r}/100,2,1)",
-            "Q": f"=COUPNUM(Settle,B{r},2,1)",
-            "R": f"=(B{r}-Settle)/365",
-            "S": f"=IF({t}>=MinYears,1,0)",
-            "T": f"=SUM(CashFlows!{pv_first}{r}:{pv_last}{r})",
-            "U": f"=T{r}-L{r}",
-            "V": f"=U{r}-G{r}",
-            "W": f"=YIELD(Settle,B{r},C{r}/100,U{r},100,2,1)*100",
-            "X": f"=(W{r}-N{r})*100",
-            "Y": f"=1/P{r}",
-            "Z": f"=Y{r}*(T{r}-M{r})",
-            "AA": f"=S{r}*Z{r}^2",
+            "maturity": f"=Data!A{d}",
+            "coupon": f"=Data!B{d}",
+            "bid": f"=Data!C{d}",
+            "ask": f"=Data!D{d}",
+            "wsj_yield": f"=Data!F{d}",
+            # 32nds: thousandths digits "xxe" -> xx 32nds + e eighths of a 32nd (locale independent)
+            "clean": f"=INT(D{r})+(INT(MOD(ROUND(D{r}*1000,0),1000)/10)+MOD(ROUND(D{r}*1000,0),10)/8)/32",
+            "prev": f"=COUPPCD(Settle,A{r},2,1)",
+            "next": f"=COUPNCD(Settle,A{r},2,1)",
+            "days_acc": f"=Settle-G{r}",
+            "days_period": f"=H{r}-G{r}",
+            "accrued": f"=B{r}/2*I{r}/J{r}",
+            "dirty": f"=F{r}+K{r}",
+            "ytm": f"=YIELD(Settle,A{r},B{r}/100,F{r},100,2,1)*100",
+            "ytm_diff": f"=(M{r}-E{r})*100",
+            "duration": f"=MDURATION(Settle,A{r},B{r}/100,M{r}/100,2,1)",
+            "n_coupons": f"=COUPNUM(Settle,A{r},2,1)",
+            "years": f"=(A{r}-Settle)/365",
+            "use": f"=IF(Q{r}>=MinYears,1,0)",
+            "model_dirty": f"=SUM(CashFlows!{pv_first}{r}:{pv_last}{r})",
+            "model_clean": f"=S{r}-K{r}",
+            "price_err": f"=T{r}-F{r}",
+            "model_ytm": f"=YIELD(Settle,A{r},B{r}/100,T{r},100,2,1)*100",
+            "yield_err": f"=(V{r}-M{r})*100",
+            "w_err": f"=(S{r}-L{r})/(L{r}*O{r})",
+            "w_sq": f"=R{r}*X{r}^2",
         }
-        formats = {"B": DATE_FMT, "C": PCT3, "D": PCT3, "E": PCT3, "F": PCT3, "G": PX, "H": DATE_FMT, "I": DATE_FMT,
-                   "L": PX, "M": PX, "N": PCT3, "O": "0.00", "P": "0.0000", "R": "0.0000", "T": PX, "U": PX,
-                   "V": "0.0000", "W": PCT3, "X": "0.00", "Y": "0.0000", "Z": "0.000000", "AA": "0.00000000"}
-        for col, value in formulas.items():
-            cell = ws[f"{col}{r}"]
-            cell.value = value
-            if col in formats:
-                cell.number_format = formats[col]
-    ws.freeze_panes = f"C{FIRST_ROW}"
-    set_widths(ws, {get_column_letter(i + 1): w for i, (_, w) in enumerate(BOND_COLUMNS)})
+        for key, formula in formulas.items():
+            cell = ws[f"{C[key]}{r}"]
+            cell.value = formula
+            if key in fmt:
+                cell.number_format = fmt[key]
+    last = BOND_FIRST_ROW + n_bonds - 1
+    ws[f"W{last + 2}"] = "Sum of squares (objective):"
+    ws[f"W{last + 2}"].font = BOLD
+    ws[f"Y{last + 2}"] = f"=SUM(Y{BOND_FIRST_ROW}:Y{last})"
+    ws[f"Y{last + 2}"].number_format = "0.000000"
+    ws[f"Y{last + 2}"].font = BOLD
+    ws.freeze_panes = f"C{BOND_FIRST_ROW}"
+    widths(ws, {"A": 11, "B": 9, "C": 9, "D": 9, "E": 10, "F": 11, "G": 11, "H": 11, "I": 8, "J": 8, "K": 10,
+                "L": 10, "M": 10, "N": 9, "O": 9, "P": 8, "Q": 9, "R": 8, "S": 11, "T": 11, "U": 10, "V": 10,
+                "W": 9, "X": 10, "Y": 11})
 
 
-def build_cashflows(wb: Workbook, n_bonds: int, n_flow_cols: int) -> None:
+def build_cashflows(wb: Workbook, n_bonds: int, n_cols: int) -> None:
     ws = wb.create_sheet("CashFlows")
-    ws["A1"] = ("Every remaining payment of every bond. Block 1: payment dates (k-th coupon after settlement). "
-                "Block 2: Svensson zero rate r(t_k). Block 3: present value = amount x exp(-r t). Model dirty price = row sum of block 3.")
-    base = ["#", "Maturity", "Coupon %", "Remaining flows N", "Month-end (1/0)"]
-    header(ws, 3, base)
-    date_start = 6
-    rate_start = date_start + n_flow_cols + 1
-    pv_start = rate_start + n_flow_cols + 1
-    header(ws, 3, [f"Date {k}" for k in range(1, n_flow_cols + 1)], date_start)
-    header(ws, 3, [f"r(t) {k}" for k in range(1, n_flow_cols + 1)], rate_start)
-    header(ws, 3, [f"PV {k}" for k in range(1, n_flow_cols + 1)], pv_start)
-    ws.cell(row=2, column=date_start, value="Payment dates").font = BOLD
-    ws.cell(row=2, column=rate_start, value="Zero rates (continuous, decimal)").font = BOLD
-    ws.cell(row=2, column=pv_start, value="Present values (per 100 face)").font = BOLD
-
+    ws["A1"] = "Remaining cash flows of each bond and their present values off the Svensson curve"
+    ws["A1"].font = TITLE
+    ws["A2"] = ("Coupon k (k = 1..N) falls 6(k-1) months after the next coupon date; month-end bonds stay on month-ends. "
+                "PV = (coupon/2 + 100 at maturity) x exp(-r(t) t), with t = (date - settlement)/365 and r(t) the Svensson zero rate "
+                "using the parameters on the Curve sheet. Row sums feed Bonds!S (model dirty price).")
+    ws["A2"].alignment = WRAP
+    ws.merge_cells("A2:P2")
+    ws.row_dimensions[2].height = 45
+    header(ws, BOND_HEADER_ROW, ["Maturity", "Coupon (%)", "Coupons left (N)", "Month-end? (1/0)"], height=32)
+    date0 = CF_DATE_FIRST_COL
+    pv0 = CF_DATE_FIRST_COL + n_cols + 1
+    header(ws, BOND_HEADER_ROW, [f"Date {k}" for k in range(1, n_cols + 1)], date0)
+    header(ws, BOND_HEADER_ROW, [f"PV {k}" for k in range(1, n_cols + 1)], pv0)
+    ws.cell(row=BOND_HEADER_ROW - 1, column=date0, value="Payment dates").font = BOLD
+    ws.cell(row=BOND_HEADER_ROW - 1, column=pv0, value="Present values (per 100 face)").font = BOLD
     for i in range(n_bonds):
-        r = FIRST_ROW + i
-        ws[f"A{r}"] = i + 1
+        r = BOND_FIRST_ROW + i
+        ws[f"A{r}"] = f"=Bonds!A{r}"
+        ws[f"A{r}"].number_format = DATE_FMT
         ws[f"B{r}"] = f"=Bonds!B{r}"
-        ws[f"B{r}"].number_format = DATE_FMT
-        ws[f"C{r}"] = f"=Bonds!C{r}"
-        ws[f"C{r}"].number_format = PCT3
-        ws[f"D{r}"] = f"=Bonds!Q{r}"
-        ws[f"E{r}"] = f"=IF(DAY(B{r})=DAY(EOMONTH(B{r},0)),1,0)"
-        for k in range(1, n_flow_cols + 1):
-            dcol = get_column_letter(date_start + k - 1)
-            rcol = get_column_letter(rate_start + k - 1)
-            pcol = get_column_letter(pv_start + k - 1)
-            shifted = f"EDATE(Bonds!$I{r},6*({k}-1))"
-            ws[f"{dcol}{r}"] = f'=IF({k}>$D{r},"",IF($E{r}=1,EOMONTH({shifted},0),{shifted}))'
+        ws[f"B{r}"].number_format = "0.000"
+        ws[f"C{r}"] = f"=Bonds!P{r}"
+        ws[f"D{r}"] = f"=IF(DAY(A{r})=DAY(EOMONTH(A{r},0)),1,0)"
+        for k in range(1, n_cols + 1):
+            dcol = get_column_letter(date0 + k - 1)
+            pcol = get_column_letter(pv0 + k - 1)
+            shifted = f"EDATE(Bonds!$H{r},6*({k}-1))"
+            ws[f"{dcol}{r}"] = f'=IF({k}>$C{r},"",IF($D{r}=1,EOMONTH({shifted},0),{shifted}))'
             ws[f"{dcol}{r}"].number_format = DATE_FMT
             t = f"(({dcol}{r}-Settle)/365)"
-            ws[f"{rcol}{r}"] = f'=IF({dcol}{r}="","",{ZERO_FORMULA.format(t=t)})'
-            ws[f"{rcol}{r}"].number_format = "0.00000"
-            amount = f"($C{r}/2+IF({k}=$D{r},100,0))"
-            ws[f"{pcol}{r}"] = f'=IF({dcol}{r}="",0,{amount}*EXP(-{rcol}{r}*{t}))'
+            amount = f"($B{r}/2+IF({k}=$C{r},100,0))"
+            ws[f"{pcol}{r}"] = f'=IF({dcol}{r}="",0,{amount}*EXP(-({ZERO_FORMULA.format(t=t)})*{t}))'
             ws[f"{pcol}{r}"].number_format = "0.0000"
-    ws.freeze_panes = f"F{FIRST_ROW}"
-    set_widths(ws, {"A": 5, "B": 11, "C": 8, "D": 7, "E": 7})
-    for c in range(date_start, pv_start + n_flow_cols):
-        ws.column_dimensions[get_column_letter(c)].width = 10.5
+    ws.freeze_panes = f"E{BOND_FIRST_ROW}"
+    widths(ws, {"A": 11, "B": 9, "C": 8, "D": 9})
+    for c in range(date0, pv0 + n_cols):
+        ws.column_dimensions[get_column_letter(c)].width = 10
 
 
-def build_zero_curve(wb: Workbook, results: dict, n_bonds: int) -> None:
-    ws = wb.create_sheet("ZeroCurve")
-    ws["A1"] = ("Deliverable: continuously compounded discount rate for every Treasury payment date in the sample "
-                "(union of all coupon and principal dates). Dates are the distinct payment dates from the CashFlows sheet; rates are live formulas.")
-    header(ws, 3, ["Payment date", "Days from settlement", "t (years)", "Zero rate r(t) %", "Discount factor d(t)", "Instantaneous forward f(t) %"])
-    ws.row_dimensions[3].height = 32
-    payments = results["payment_dates"]
-    for i, p in enumerate(payments):
-        r = 4 + i
-        ws.cell(row=r, column=1, value=datetime.fromisoformat(p["payment_date"])).number_format = DATE_FMT
-        ws.cell(row=r, column=2, value=f"=A{r}-Settle").number_format = "0"
-        ws.cell(row=r, column=3, value=f"=B{r}/365").number_format = "0.0000"
-        ws.cell(row=r, column=4, value="=(" + ZERO_FORMULA.format(t=f"C{r}") + ")*100").number_format = "0.0000"
-        ws.cell(row=r, column=5, value=f"=EXP(-D{r}/100*C{r})").number_format = "0.000000"
-        ws.cell(row=r, column=6, value="=(" + FORWARD_FORMULA.format(t=f"C{r}") + ")*100").number_format = "0.0000"
-    last = 3 + len(payments)
-    ws.freeze_panes = "A4"
-    set_widths(ws, {"A": 13, "B": 11, "C": 10, "D": 13, "E": 14, "F": 16})
+def build_curve(wb: Workbook, results: dict, n_bonds: int) -> None:
+    ws = wb.create_sheet("Curve")
+    ws["A1"] = "Svensson zero-coupon curve: parameters, fit and results"
+    ws["A1"].font = TITLE
+    ws["A3"] = "Parameters (continuously compounded, decimals). Run Solver on B11 or edit by hand."
+    ws["A3"].font = BOLD
+    params = results["svensson"]["params"]
+    notes = ["level: r(t) as t -> infinity", "slope: r(0) = beta_0 + beta_1", "first hump (decay tau_1)",
+             "second hump (decay tau_2)", "decay of slope / first hump, years", "decay of second hump, years"]
+    for i, (label, key, note) in enumerate(zip(PARAM_NAMES, PARAM_KEYS, notes)):
+        r = CURVE_PARAM_FIRST_ROW + i
+        ws[f"A{r}"] = label
+        ws[f"B{r}"] = float(params[key])
+        ws[f"B{r}"].number_format = "0.000000"
+        ws[f"B{r}"].fill = INPUT_FILL
+        ws[f"C{r}"] = note
+        name(wb, label, f"Curve!$B${r}")
+
+    first, last = BOND_FIRST_ROW, BOND_FIRST_ROW + n_bonds - 1
+    R, U, W = f"Bonds!R{first}:R{last}", f"Bonds!U{first}:U{last}", f"Bonds!W{first}:W{last}"
+    stats = [
+        (11, "Objective: sum over used bonds of ((model - market dirty price) / (dirty price x duration))^2 = sum of squared first-order yield errors", f"=Bonds!Y{last + 2}", "0.00000000"),
+        (12, "Bonds used in the fit", f"=SUM({R})", "0"),
+        (13, "Price RMSE (per 100 face)", f"=SQRT(SUMPRODUCT({R},{U},{U})/B12)", "0.0000"),
+        (14, "Yield RMSE (bp)", f"=SQRT(SUMPRODUCT({R},{W},{W})/B12)", "0.00"),
+        (15, "Yield mean absolute error (bp)", f"=SUMPRODUCT({R},ABS({W}))/B12", "0.00"),
+        (16, "Largest absolute yield error (bp)", f"=MAX(INDEX({R}*ABS({W}),0))", "0.00"),
+        (17, "r(0) = beta_0 + beta_1  (%)", "=(beta_0+beta_1)*100", "0.000"),
+        (18, "r(30 years)  (%)", "=(" + ZERO_FORMULA.format(t="30") + ")*100", "0.000"),
+    ]
+    for r, label, formula, fmt in stats:
+        ws[f"A{r}"] = label
+        ws[f"B{r}"] = formula
+        ws[f"B{r}"].number_format = fmt
+    ws["B11"].font = BOLD
+    ws["D11"] = ("Solver: Set Objective B11 to Min; By Changing B4:B9; Constraints B4 >= 0, B8 >= 0.05, B9 >= 0.05; "
+                 "GRG Nonlinear; untick 'Make Unconstrained Variables Non-Negative'. Try a few starting values for "
+                 "tau_1 (1-4) and tau_2 (6-20) and keep the lowest B11.")
+    ws["D11"].alignment = WRAP
+    ws.merge_cells("D11:G14")
+
+    ws[f"A{CURVE_TABLE_HEADER_ROW - 1}"] = ("Zero rate, discount factor and instantaneous forward rate at every Treasury payment date in the sample "
+                                             "(dates: the distinct dates on the CashFlows sheet, listed as values)")
+    ws[f"A{CURVE_TABLE_HEADER_ROW - 1}"].font = BOLD
+    header(ws, CURVE_TABLE_HEADER_ROW, ["Payment date", "Days", "t (years)", "Zero rate r(t) %", "Discount factor", "Forward f(t) %"], height=32)
+    pay = results["payment_dates"]
+    for i, p in enumerate(pay):
+        r = CURVE_TABLE_FIRST_ROW + i
+        ws[f"A{r}"] = as_dt(p["payment_date"])
+        ws[f"A{r}"].number_format = DATE_FMT
+        ws[f"B{r}"] = f"=A{r}-Settle"
+        ws[f"C{r}"] = f"=B{r}/365"
+        ws[f"C{r}"].number_format = "0.0000"
+        ws[f"D{r}"] = "=(" + ZERO_FORMULA.format(t=f"C{r}") + ")*100"
+        ws[f"D{r}"].number_format = "0.0000"
+        ws[f"E{r}"] = f"=EXP(-D{r}/100*C{r})"
+        ws[f"E{r}"].number_format = "0.000000"
+        ws[f"F{r}"] = "=(" + FORWARD_FORMULA.format(t=f"C{r}") + ")*100"
+        ws[f"F{r}"].number_format = "0.0000"
+    table_last = CURVE_TABLE_FIRST_ROW + len(pay) - 1
+    widths(ws, {"A": 13, "B": 12, "C": 10, "D": 13, "E": 13, "F": 12, "G": 12})
 
     chart = ScatterChart()
-    chart.title = "ZCB term structure: zero rate, instantaneous forward and Treasury street yields"
-    chart.style = 13
+    chart.title = "Treasury zero-coupon curve (continuous) vs. bond yields to maturity"
+    chart.style = 2
     chart.x_axis.title = "Years from settlement"
-    chart.y_axis.title = "Rate (% per year)"
-    chart.x_axis.scaling.min = 0
-    chart.x_axis.scaling.max = 31
-    chart.y_axis.scaling.min = 2.5
-    chart.y_axis.scaling.max = 6.0
-    chart.height, chart.width = 11, 22
-    x_ref = Reference(ws, min_col=3, min_row=4, max_row=last)
-    zero = Series(Reference(ws, min_col=4, min_row=4, max_row=last), x_ref, title="Zero rate r(t)")
+    chart.y_axis.title = "Rate (%)"
+    chart.x_axis.scaling.min, chart.x_axis.scaling.max = 0, 31
+    chart.y_axis.scaling.min, chart.y_axis.scaling.max = 2.5, 6.0
+    chart.x_axis.majorUnit = 5
+    chart.height, chart.width = 10, 20
+    x_ref = Reference(ws, min_col=3, min_row=CURVE_TABLE_FIRST_ROW, max_row=table_last)
+    zero = Series(Reference(ws, min_col=4, min_row=CURVE_TABLE_FIRST_ROW, max_row=table_last), x_ref, title="Zero rate r(t)")
     zero.marker.symbol = "none"
-    zero.graphicalProperties.line.solidFill = "2A78D6"
     zero.graphicalProperties.line.width = 22000
-    fwd = Series(Reference(ws, min_col=6, min_row=4, max_row=last), x_ref, title="Instantaneous forward f(t)")
+    fwd = Series(Reference(ws, min_col=6, min_row=CURVE_TABLE_FIRST_ROW, max_row=table_last), x_ref, title="Forward rate f(t)")
     fwd.marker.symbol = "none"
-    fwd.graphicalProperties.line.solidFill = "EB6834"
     fwd.graphicalProperties.line.dashStyle = "dash"
-    fwd.graphicalProperties.line.width = 22000
+    fwd.graphicalProperties.line.width = 15000
     bonds_ws = wb["Bonds"]
-    b_last = FIRST_ROW + n_bonds - 1
-    ytm = Series(Reference(bonds_ws, min_col=14, min_row=FIRST_ROW, max_row=b_last),
-                 Reference(bonds_ws, min_col=18, min_row=FIRST_ROW, max_row=b_last), title="Treasury street yields")
+    ytm = Series(Reference(bonds_ws, min_col=13, min_row=first, max_row=last),
+                 Reference(bonds_ws, min_col=17, min_row=first, max_row=last), title="Bond YTM (street)")
     ytm.marker.symbol = "circle"
     ytm.marker.size = 4
-    ytm.marker.graphicalProperties.solidFill = "898781"
-    ytm.marker.graphicalProperties.line.solidFill = "898781"
     ytm.graphicalProperties.line.noFill = True
     for s in (zero, fwd, ytm):
         chart.series.append(s)
-    ws.add_chart(chart, "H3")
+    ws.add_chart(chart, "H20")
+    ws.freeze_panes = f"A{CURVE_TABLE_FIRST_ROW}"
 
 
-def build_robustness(wb: Workbook, results: dict) -> None:
-    ws = wb.create_sheet("Robustness")
-    ws["A1"] = "Robustness checks (values computed by the Python implementation, python/run_analysis.py)."
-    ws["A1"].font = BOLD
-    row = 3
-    ws.cell(row=row, column=1, value="1. Convention check: RMSE of our recomputed asked yield vs the WSJ 'Asked yield' column").font = BOLD
-    header(ws, row + 1, ["Settlement rule", "Settlement", "Price format", "RMSE (bp)", "Median |err| (bp)", "Max |err| (bp)"])
-    for i, c in enumerate(results["conventions"]):
-        r = row + 2 + i
-        ws.cell(row=r, column=1, value=c["settlement_rule"])
-        ws.cell(row=r, column=2, value=datetime.fromisoformat(c["settlement"])).number_format = DATE_FMT
-        ws.cell(row=r, column=3, value=c["price_format"])
-        ws.cell(row=r, column=4, value=c["rmse_bp"]).number_format = "0.000"
-        ws.cell(row=r, column=5, value=c["median_abs_bp"]).number_format = "0.000"
-        ws.cell(row=r, column=6, value=c["max_abs_bp"]).number_format = "0.000"
-    row = row + 3 + len(results["conventions"])
-    ws.cell(row=row, column=1, value="2. Model comparison (bonds in fit)").font = BOLD
-    header(ws, row + 1, ["Model", "Bonds in fit", "Weighted SSE", "Price RMSE", "Yield RMSE (bp)", "Yield MAE (bp)", "Max |yield err| (bp)"])
-    for i, key in enumerate(("svensson", "nelson_siegel")):
-        s = results[key]
-        r = row + 2 + i
-        ws.cell(row=r, column=1, value="Svensson (6 parameters)" if key == "svensson" else "Nelson-Siegel (4 parameters)")
-        ws.cell(row=r, column=2, value=s["n_bonds_in_fit"])
-        ws.cell(row=r, column=3, value=s["weighted_sse"]).number_format = "0.0000"
-        ws.cell(row=r, column=4, value=s["price_rmse"]).number_format = "0.0000"
-        ws.cell(row=r, column=5, value=s["yield_rmse_bp"]).number_format = "0.00"
-        ws.cell(row=r, column=6, value=s["yield_mae_bp"]).number_format = "0.00"
-        ws.cell(row=r, column=7, value=s["yield_max_abs_bp"]).number_format = "0.00"
-    row += 5
-    ws.cell(row=row, column=1, value="3. beta0 profile: refit with the asymptotic level pinned; the in-sample curve barely moves").font = BOLD
-    cols = list(results["beta0_profile"][0].keys())
-    header(ws, row + 1, cols)
-    for i, p in enumerate(results["beta0_profile"]):
-        r = row + 2 + i
-        for j, c in enumerate(cols):
-            ws.cell(row=r, column=1 + j, value=p[c]).number_format = "0.0000"
-    set_widths(ws, {"A": 30, "B": 14, "C": 16, "D": 14, "E": 16, "F": 16, "G": 18})
-    for col in "HIJKLMN":
-        ws.column_dimensions[col].width = 13
+def notes_text(results: dict) -> list[str]:
+    sv = results["svensson"]
+    p = sv["params"]
+    pay = results["payment_dates"]
+    conv = results["conventions"][0]
+    n_total, n_used = sv["n_bonds_total"], sv["n_bonds_in_fit"]
+
+    def zero_at(years: float) -> float:
+        return min(pay, key=lambda r: abs(r["t_years"] - years))["zero_rate_cc_pct"]
+
+    prof = {round(r["beta0_fixed_pct"]): r for r in results["beta0_profile"]}
+    shift = max(abs(prof[3][k] - prof[0][k]) for k in prof[0] if k.startswith("zero_")) * 100
+    others = [c["rmse_bp"] for c in results["conventions"]
+              if c["price_format"] == conv["price_format"] and c["settlement"] != conv["settlement"]]
+    alt_lo, alt_hi = min(others), max(others)
+    dec_lo = min(c["rmse_bp"] for c in results["conventions"] if c["price_format"] == "plain decimal")
+    return [
+        f"Goal. Build a continuously compounded zero-coupon (ZCB) term structure from the WSJ Treasury note and bond quotes "
+        f"of {date.fromisoformat(results['quote_date']):%A, %B %d, %Y} and report the discount rate for every coupon and "
+        f"principal payment date in the sample.",
+        f"Data (Data sheet). {n_total} notes and bonds. Prices are quoted in 32nds and the third decimal is eighths of a 32nd, "
+        f"so 99.256 = 99 + 25.75/32 (converted in Bonds!F). We price off the asked side. Settlement is the next business day, "
+        f"{date.fromisoformat(results['settlement']):%B %d, %Y} (Monday {LABOR_DAY_2026:%B %d} is Labor Day). As a check, "
+        f"recomputing each bond's yield with YIELD() reproduces the WSJ asked yield with a median error of "
+        f"{conv['median_abs_bp']:.2f} bp (Bonds!N); other settlement dates give {alt_lo:.1f} to {alt_hi:.1f} bp and reading the quotes as "
+        f"plain decimals gives over {dec_lo:.0f} bp.",
+        "Cash flows (Bonds, CashFlows sheets). Coupons are semi-annual on the maturity day of month (month-end maturities pay "
+        "on month-ends) and principal of 100 is paid at maturity. Accrued interest = coupon/2 x days since the last coupon / "
+        "days in the coupon period (actual/actual, COUPPCD and COUPNCD). Dirty price = clean price + accrued. Time to each "
+        "payment is t = days/365 from settlement.",
+        "Model. The zero rate follows the Svensson (1994) form suggested with the data: r(t) = beta_0 + beta_1 (1-e^(-t/tau_1))/(t/tau_1) "
+        "+ beta_2 [(1-e^(-t/tau_1))/(t/tau_1) - e^(-t/tau_1)] + beta_3 [(1-e^(-t/tau_2))/(t/tau_2) - e^(-t/tau_2)]. The discount "
+        "factor is d(t) = e^(-r(t) t), and each bond's model price is the sum of its payments times their discount factors "
+        "(CashFlows sheet, one column per remaining coupon; row sums feed Bonds!S). r(0) = beta_0 + beta_1, r(infinity) = beta_0, "
+        "and the instantaneous forward rate is f(t) = beta_0 + beta_1 e^(-t/tau_1) + beta_2 (t/tau_1) e^(-t/tau_1) + beta_3 (t/tau_2) e^(-t/tau_2).",
+        f"Fitting (Curve sheet). Solver minimises the sum over bonds of ((model dirty price - market dirty price) / (dirty price x modified duration))^2 "
+        f"over the six parameters, with beta_0 >= 0 and tau_1, tau_2 >= 0.05. Each price error divided by price times duration is the "
+        f"first-order yield error, so this is the sum of squared yield errors and a 30-year bond and a 1-year note count equally. The {n_total - n_used} bonds with under 3 months "
+        f"to maturity are left out of the objective (their duration is close to zero, so a one-cent quote error is a 50 bp yield "
+        f"error) but are still priced off the curve as an out-of-sample check. Because the objective has several local minima in "
+        f"(tau_1, tau_2), Solver was run from several starting values for the two decay parameters and the lowest objective kept.",
+        f"Results. beta_0 = {p['beta0']:.4f} (the non-negativity constraint binds), beta_1 = {p['beta1']:.4f}, beta_2 = {p['beta2']:.4f}, "
+        f"beta_3 = {p['beta3']:.4f}, tau_1 = {p['tau1']:.2f}, tau_2 = {p['tau2']:.2f}. The curve prices the {n_used} bonds with a yield "
+        f"RMSE of {sv['yield_rmse_bp']:.1f} bp (mean absolute {sv['yield_mae_bp']:.1f} bp, largest {sv['yield_max_abs_bp']:.1f} bp). "
+        f"The zero curve rises from {(p['beta0'] + p['beta1']) * 100:.2f}% at the short end to {zero_at(1):.2f}% at 1 year, "
+        f"{zero_at(5):.2f}% at 5, {zero_at(10):.2f}% at 10, {zero_at(20):.2f}% at 20 and {zero_at(30):.2f}% at 30 years. The "
+        f"Curve sheet lists r(t), d(t) and f(t) for all {len(pay)} distinct payment dates from "
+        f"{date.fromisoformat(pay[0]['payment_date']):%b %d, %Y} to {date.fromisoformat(pay[-1]['payment_date']):%b %d, %Y}, with the chart. "
+        f"One caveat: beta_0 (the rate at infinite maturity) is not well identified by 30 years of data; fixing it anywhere between 0% "
+        f"and 3% worsens the fit by only about {prof[3]['approx_yield_rmse_bp'] - prof[0]['approx_yield_rmse_bp']:.1f} bp RMSE and moves "
+        f"the curve inside the sample by about {shift:.0f} bp at the two ends, so the payment-date discount factors are robust to it. "
+        f"The curve should not be extrapolated beyond the 30-year sample.",
+    ]
 
 
-def build_methodology(wb: Workbook, text: str) -> None:
-    ws = wb.create_sheet("Methodology")
-    ws["B2"] = "Methodology (one page)"
-    ws["B2"].font = TITLE_FONT
-    for i, paragraph in enumerate(text.strip().split("\n\n")):
-        cell = ws.cell(row=4 + i, column=2, value=paragraph)
+def build_notes(wb: Workbook, results: dict) -> None:
+    ws = wb.create_sheet("Notes")
+    ws["A1"] = "Miniproject 2 - Creating a ZCB Term Structure"
+    ws["A1"].font = TITLE
+    ws["A2"] = "FRE 6103 Valuation for Financial Engineering. Methodology and results."
+    for i, paragraph in enumerate(notes_text(results)):
+        r = 4 + i
+        cell = ws.cell(row=r, column=1, value=paragraph)
         cell.alignment = WRAP
-        ws.merge_cells(start_row=4 + i, start_column=2, end_row=4 + i, end_column=9)
-        ws.row_dimensions[4 + i].height = max(18, 15 * (len(paragraph) // 120 + 1))
-    set_widths(ws, {"A": 2, "B": 18, "C": 18, "D": 18, "E": 18, "F": 18, "G": 18, "H": 18, "I": 18})
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=10)
+        ws.row_dimensions[r].height = 15 * (len(paragraph) // 105 + 2)
+    for col in "ABCDEFGHIJ":
+        ws.column_dimensions[col].width = 14
 
 
-def build_workbook(data_path: Path, results_path: Path, methodology_path: Path, out_path: Path) -> Path:
+def build_workbook(data_path: Path, results_path: Path, out_path: Path) -> Path:
     results = json.loads(results_path.read_text())
     sheet = load_wsj_quotes(data_path)
     n_bonds = len(sheet.quotes)
-    n_flow_cols = max(b["n_cash_flows"] for b in results["bonds"])
+    n_cols = max(b["n_cash_flows"] for b in results["bonds"])
     wb = Workbook()
-    build_cover(wb, results)
-    build_inputs(wb, results)
-    build_data(wb, sheet.quotes)
-    build_bonds(wb, n_bonds, n_flow_cols)
-    build_cashflows(wb, n_bonds, n_flow_cols)
-    build_zero_curve(wb, results, n_bonds)
-    build_robustness(wb, results)
-    build_methodology(wb, methodology_path.read_text() if methodology_path.exists() else "See README.")
+    build_data(wb, sheet.quotes, sheet.quote_date)
+    build_bonds(wb, results, n_bonds, n_cols)
+    build_cashflows(wb, n_bonds, n_cols)
+    build_curve(wb, results, n_bonds)
+    build_notes(wb, results)
     wb.calculation.fullCalcOnLoad = True
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out_path)
@@ -457,10 +428,9 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data", default="../data/Treasury_data_090426.xlsx")
     parser.add_argument("--results", default="../output/results.json")
-    parser.add_argument("--methodology", default="../writeup/methodology_excel.txt")
     parser.add_argument("--out", default="../excel/Miniproject2_ZCB_Term_Structure.xlsx")
     args = parser.parse_args(argv)
-    path = build_workbook(Path(args.data), Path(args.results), Path(args.methodology), Path(args.out))
+    path = build_workbook(Path(args.data), Path(args.results), Path(args.out))
     print(f"Wrote {path.resolve()} ({path.stat().st_size / 1e6:.1f} MB)")
     return 0
 

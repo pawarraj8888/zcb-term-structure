@@ -105,7 +105,8 @@ input[type=search],input[type=date]{font:inherit;padding:9px 12px;border:1px sol
 .small{font-size:13.5px;color:var(--fg-2)}
 footer{border-top:1px solid var(--border);padding:26px 0 40px;color:var(--fg-2);font-size:14px}
 .badge{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--muted);color:var(--fg-2)}
-.pos{color:var(--fg)} .neg{color:var(--fg)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.chart-fallback{padding:24px;color:var(--fg-2)}
 </style>
 </head>
 <body>
@@ -136,7 +137,7 @@ footer{border-top:1px solid var(--border);padding:26px 0 40px;color:var(--fg-2);
     </div>
   </div>
 
-  <div class="tiles" aria-label="Key results">
+  <div class="tiles" role="group" aria-label="Key results">
     <div class="tile"><div class="k">Bonds in the fit</div><div class="v" id="t-bonds">…</div><div class="d" id="t-bonds-d"></div></div>
     <div class="tile"><div class="k">Yield RMSE, fitted bonds</div><div class="v" id="t-rmse">…</div><div class="d" id="t-rmse-d"></div></div>
     <div class="tile"><div class="k">Payment dates covered</div><div class="v" id="t-dates">…</div><div class="d" id="t-dates-d"></div></div>
@@ -169,7 +170,7 @@ footer{border-top:1px solid var(--border);padding:26px 0 40px;color:var(--fg-2);
 
   <section id="results">
     <h2>Fitted model</h2>
-    <p class="sub">Svensson (1994) zero curve, estimated by weighted least squares on bond prices. Nelson-Siegel is the nested four-parameter benchmark.</p>
+    <p class="sub">Svensson (1994) zero curve, estimated by least squares on first-order yield errors (price error divided by dirty price times modified duration). Nelson-Siegel is the nested four-parameter benchmark.</p>
     <div class="formula" aria-label="Svensson formula">r(t) = β₀ + β₁·(1−e<sup>−t/τ₁</sup>)/(t/τ₁) + β₂·[(1−e<sup>−t/τ₁</sup>)/(t/τ₁) − e<sup>−t/τ₁</sup>] + β₃·[(1−e<sup>−t/τ₂</sup>)/(t/τ₂) − e<sup>−t/τ₂</sup>]&nbsp;&nbsp;&nbsp;&nbsp;d(t) = e<sup>−r(t)·t</sup></div>
     <div class="grid2" style="margin-top:18px">
       <div class="card"><table><caption>Parameters (Svensson)</caption><thead><tr><th scope="col">Parameter</th><th scope="col">Value</th><th scope="col">Meaning</th></tr></thead><tbody id="params"></tbody></table></div>
@@ -226,7 +227,7 @@ footer{border-top:1px solid var(--border);padding:26px 0 40px;color:var(--fg-2);
     <h2>Downloads</h2>
     <p class="sub">Everything needed to reproduce or grade the project.</p>
     <div class="downloads">
-      <a class="dl" href="files/Miniproject2_ZCB_Term_Structure.xlsx"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>Excel implementation (.xlsx)</span><span class="d">Live formulas: 32nds conversion, coupon schedules, accrued, YIELD, Svensson pricing of every cash flow, Solver-ready SSE, zero-curve table and chart.</span></a>
+      <a class="dl" href="files/Miniproject2_ZCB_Term_Structure.xlsx"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>Excel implementation (.xlsx)</span><span class="d">Sheets Data, Bonds, CashFlows, Curve, Notes. Live formulas: 32nds conversion, coupon schedules, accrued, YIELD, Svensson pricing of every cash flow, Solver-ready objective, zero-curve table and chart.</span></a>
       <a class="dl" href="files/Miniproject2_ZCB_Term_Structure_Writeup.pdf"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M8 13h8M8 17h8"/></svg>Methodology write-up (PDF)</span><span class="d">One page: data, conventions, model, estimation, results.</span></a>
       <a class="dl" href="https://github.com/pawarraj8888/zcb-term-structure/blob/main/notebooks/Miniproject2_ZCB_Term_Structure.ipynb"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 4l-5 8 5 8M16 4l5 8-5 8"/></svg>Python notebook and package</span><span class="d">Executed Jupyter notebook plus the <code>zcb</code> package (quotes, bonds, curves, analysis) with 32 tests.</span></a>
       <a class="dl" href="files/zero_curve_payment_dates.csv"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h16v16H4zM4 10h16M4 15h16M10 4v16"/></svg>Zero curve table (CSV)</span><span class="d">r(t), d(t), f(t) at all payment dates.</span></a>
@@ -284,7 +285,9 @@ footer{border-top:1px solid var(--border);padding:26px 0 40px;color:var(--fg-2);
     bonds:{label:'Treasury street yields', data:inFit.map(b=>({x:b.years_to_maturity,y:b.street_yield_pct,b})), backgroundColor:css('--dot'), borderColor:css('--dot'), pointRadius:3, pointHoverRadius:6, showLine:false, order:3},
     excl: {label:'Excluded (< 3 months)', data:excl.map(b=>({x:b.years_to_maturity,y:b.street_yield_pct,b})), backgroundColor:'transparent', borderColor:css('--dot'), pointRadius:4, pointHoverRadius:7, borderWidth:1.5, showLine:false, order:4},
   };
-  const chart = new Chart($('curve'), {
+  let chart = null;
+  try {
+  chart = new Chart($('curve'), {
     type:'scatter',
     data:{datasets:[ds.zero, ds.fwd, ds.bonds, ds.excl]},
     options:{
@@ -308,6 +311,10 @@ footer{border-top:1px solid var(--border);padding:26px 0 40px;color:var(--fg-2);
     }
   });
   [['c-zero',0],['c-fwd',1],['c-bonds',2],['c-excl',3]].forEach(([id,i])=> $(id).addEventListener('change', e=>{ chart.setDatasetVisibility(i, e.target.checked); chart.update(); }));
+  } catch (err) {
+    document.querySelector('.chart-wrap').innerHTML = '<p class="chart-fallback">The interactive chart could not load (the Chart.js library is fetched from a CDN). The static figure is in the <a href="files/zero_curve.png">downloads</a>, and every value is in the tables below.</p>';
+    console.warn('chart unavailable', err);
+  }
   $('chart-caption').textContent = 'Zero rate ' + f(r0,2) + '% at the short end, ' + f(zero(1)*100,2) + '% at 1 year, ' + f(zero(5)*100,2) + '% at 5, ' + f(zero(10)*100,2) + '% at 10, ' + f(zero(20)*100,2) + '% at 20 and ' + f(r30,2) + '% at 30 years. Forward rates peak near ' + f(Math.max(...grid.map(fwd))*100,2) + '%. Dots are the street yields of ' + inFit.length + ' bonds used in the fit; hollow circles are the ' + excl.length + ' bonds under 3 months to maturity.';
 
   // ---- calculator
@@ -321,12 +328,12 @@ footer{border-top:1px solid var(--border);padding:26px 0 40px;color:var(--fg-2);
   $('calc-date').value = pay[Math.min(19, pay.length-1)].payment_date; $('calc-date').min = D.settlement; $('calc-date').addEventListener('input', calc); calc();
 
   // ---- parameters & fit stats
-  const meaning = {beta0:'level, r(t) as t → ∞ (bound β₀ ≥ 0 active)', beta1:'slope: r(0) = β₀ + β₁', beta2:'first hump, decay τ₁', beta3:'second hump, decay τ₂', tau1:'decay of slope and first hump (years)', tau2:'decay of second hump (years)'};
+  const meaning = {beta0:'level, r(t) as t → ∞' + (S.bound_active_beta0 ? ' (bound β₀ ≥ 0 active)' : ''), beta1:'slope: r(0) = β₀ + β₁', beta2:'first hump, decay τ₁', beta3:'second hump, decay τ₂', tau1:'decay of slope and first hump (years)', tau2:'decay of second hump (years)'};
   const sym = {beta0:'β₀',beta1:'β₁',beta2:'β₂',beta3:'β₃',tau1:'τ₁',tau2:'τ₂'};
   $('params').innerHTML = Object.keys(sym).map(k=>`<tr><td>${sym[k]}</td><td>${f(P[k], k.startsWith('tau')?3:5)}</td><td style="text-align:left;white-space:normal">${meaning[k]}</td></tr>`).join('');
   const rows = [
     ['Bonds in fit', S.n_bonds_in_fit, NS.n_bonds_in_fit, 0],
-    ['Weighted SSE  Σ[(P<sub>model</sub>−P<sub>mkt</sub>)/D]²', S.weighted_sse, NS.weighted_sse, 4],
+    ['Objective  Σ[(P<sub>model</sub>−P<sub>mkt</sub>)/(P<sub>mkt</sub>·D)]² (squared first-order yield errors)', S.weighted_sse, NS.weighted_sse, 7],
     ['Price RMSE (per 100)', S.price_rmse, NS.price_rmse, 3],
     ['Yield RMSE (bp)', S.yield_rmse_bp, NS.yield_rmse_bp, 2],
     ['Yield mean abs error (bp)', S.yield_mae_bp, NS.yield_mae_bp, 2],

@@ -12,20 +12,22 @@ from pathlib import Path
 import numpy as np
 import openpyxl
 
-FIRST_ROW = 4
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_excel import BOND_COLS, BOND_FIRST_ROW, CURVE_SSE_CELL, CURVE_STATS, CURVE_TABLE_FIRST_ROW  # noqa: E402
+
 CHECKS = [
-    # (Bonds column, results key or callable, tolerance, label)
-    ("G", lambda b: b["clean_price"], 1e-9, "ask clean price (32nds parse)"),
-    ("L", lambda b: b["accrued_interest"], 1e-9, "accrued interest"),
-    ("M", lambda b: b["dirty_price"], 1e-9, "dirty price"),
-    ("N", lambda b: b["street_yield_pct"], 1e-7, "street yield % (Excel YIELD)"),
-    ("P", lambda b: b["modified_duration"], 1e-7, "modified duration (Excel MDURATION)"),
-    ("Q", lambda b: b["n_cash_flows"], 0, "remaining cash flows (COUPNUM)"),
-    ("S", lambda b: 1 if b["in_fit"] else 0, 0, "in-fit flag"),
-    ("T", lambda b: b["model_clean_price"] + b["accrued_interest"], 1e-7, "model dirty price"),
-    ("U", lambda b: b["model_clean_price"], 1e-7, "model clean price"),
-    ("W", lambda b: b["model_yield_pct"], 1e-6, "model yield %"),
-    ("X", lambda b: b["yield_error_bp"], 1e-4, "yield error (bp)"),
+    # (Bonds column key, python getter, tolerance, label)
+    ("clean", lambda b: b["clean_price"], 1e-9, "asked clean price (32nds parse)"),
+    ("accrued", lambda b: b["accrued_interest"], 1e-9, "accrued interest"),
+    ("dirty", lambda b: b["dirty_price"], 1e-9, "dirty price"),
+    ("ytm", lambda b: b["street_yield_pct"], 1e-7, "street yield % (Excel YIELD)"),
+    ("duration", lambda b: b["modified_duration"], 1e-7, "modified duration (Excel MDURATION)"),
+    ("n_coupons", lambda b: b["n_cash_flows"], 0, "remaining cash flows (COUPNUM)"),
+    ("use", lambda b: 1 if b["in_fit"] else 0, 0, "in-fit flag"),
+    ("model_dirty", lambda b: b["model_clean_price"] + b["accrued_interest"], 1e-7, "model dirty price"),
+    ("model_clean", lambda b: b["model_clean_price"], 1e-7, "model clean price"),
+    ("model_ytm", lambda b: b["model_yield_pct"], 1e-6, "model yield %"),
+    ("yield_err", lambda b: b["yield_error_bp"], 1e-4, "yield error (bp)"),
 ]
 
 
@@ -36,30 +38,31 @@ def compare(workbook: Path, results: Path) -> int:
     ws = wb["Bonds"]
     failures = 0
     print(f"{'check':45s} {'max |Excel - Python|':>22s}  tolerance")
-    for col, getter, tol, label in CHECKS:
-        excel = np.array([ws[f"{col}{FIRST_ROW + i}"].value for i in range(len(bonds))], dtype=float)
-        python = np.array([getter(b) for b in bonds], dtype=float)
-        if np.isnan(excel).any():
-            print(f"{label:45s} {'MISSING (not recalculated?)':>22s}")
+    for key, getter, tol, label in CHECKS:
+        col = BOND_COLS[key]
+        raw = [ws[f"{col}{BOND_FIRST_ROW + i}"].value for i in range(len(bonds))]
+        if any(v is None or isinstance(v, str) for v in raw):
+            bad = next(v for v in raw if v is None or isinstance(v, str))
+            print(f"{label:45s} {'NOT NUMERIC: ' + repr(bad):>22s}  FAIL")
             failures += 1
             continue
-        diff = float(np.max(np.abs(excel - python)))
+        diff = float(np.max(np.abs(np.array(raw, dtype=float) - np.array([getter(b) for b in bonds], dtype=float))))
         ok = diff <= tol
         failures += 0 if ok else 1
         print(f"{label:45s} {diff:22.3e}  {tol:g} {'OK' if ok else 'FAIL'}")
 
-    inputs = wb["Inputs"]
+    curve = wb["Curve"]
     sv = res["svensson"]
-    settle = inputs["B6"].value
+    settle = wb["Bonds"]["B3"].value
     settle = settle.date() if isinstance(settle, datetime) else settle
     scalars = [
         ("settlement date", settle == date.fromisoformat(res["settlement"]), None),
-        ("weighted SSE", inputs["B21"].value, sv["weighted_sse"]),
-        ("bonds in fit", inputs["B22"].value, sv["n_bonds_in_fit"]),
-        ("price RMSE", inputs["B24"].value, sv["price_rmse"]),
-        ("yield RMSE (bp)", inputs["B25"].value, sv["yield_rmse_bp"]),
-        ("yield MAE (bp)", inputs["B26"].value, sv["yield_mae_bp"]),
-        ("max |yield error| (bp)", inputs["B27"].value, sv["yield_max_abs_bp"]),
+        ("weighted SSE", curve[CURVE_SSE_CELL].value, sv["weighted_sse"]),
+        ("bonds in fit", curve[CURVE_STATS["n_used"]].value, sv["n_bonds_in_fit"]),
+        ("price RMSE", curve[CURVE_STATS["price_rmse"]].value, sv["price_rmse"]),
+        ("yield RMSE (bp)", curve[CURVE_STATS["yield_rmse"]].value, sv["yield_rmse_bp"]),
+        ("yield MAE (bp)", curve[CURVE_STATS["yield_mae"]].value, sv["yield_mae_bp"]),
+        ("max |yield error| (bp)", curve[CURVE_STATS["yield_max"]].value, sv["yield_max_abs_bp"]),
     ]
     print()
     for label, excel_value, python_value in scalars:
@@ -72,16 +75,16 @@ def compare(workbook: Path, results: Path) -> int:
             print(f"{label:45s} Excel {float(excel_value):.10g} | Python {float(python_value):.10g} {'OK' if ok else 'FAIL'}")
         failures += 0 if ok else 1
 
-    zc = wb["ZeroCurve"]
     pay = res["payment_dates"]
     print()
-    for col, key, label in (("D", "zero_rate_cc_pct", "zero rate %"), ("E", "discount_factor", "discount factor"), ("F", "inst_forward_cc_pct", "forward %")):
-        excel = np.array([zc[f"{col}{4 + i}"].value for i in range(len(pay))], dtype=float)
+    for col, key, label in (("D", "zero_rate_cc_pct", "zero rate %"), ("E", "discount_factor", "discount factor"),
+                            ("F", "inst_forward_cc_pct", "forward %")):
+        excel = np.array([curve[f"{col}{CURVE_TABLE_FIRST_ROW + i}"].value for i in range(len(pay))], dtype=float)
         python = np.array([p[key] for p in pay], dtype=float)
         diff = float(np.max(np.abs(excel - python)))
         ok = diff <= 1e-8
         failures += 0 if ok else 1
-        print(f"{'ZeroCurve ' + label:45s} {diff:22.3e}  {'OK' if ok else 'FAIL'}  ({len(pay)} payment dates)")
+        print(f"{'Curve table ' + label:45s} {diff:22.3e}  {'OK' if ok else 'FAIL'}  ({len(pay)} payment dates)")
     print(f"\n{'ALL CHECKS PASSED' if failures == 0 else f'{failures} CHECK(S) FAILED'}")
     return 0 if failures == 0 else 1
 

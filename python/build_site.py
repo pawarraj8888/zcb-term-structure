@@ -32,7 +32,9 @@ def main(argv=None) -> int:
     results = json.loads((root / "output" / "results.json").read_text())
     results["methodology"] = [{"heading": h, "text": t} for h, t in build_paragraphs(results)]
     (docs / "data.js").write_text("window.ZCB_DATA = " + json.dumps(results, separators=(",", ":")) + ";\n")
-    (docs / "data.json").write_text(json.dumps(results, indent=1))
+    stale = docs / "data.json"
+    if stale.exists():
+        stale.unlink()
 
     for source, name in DOWNLOADS:
         src = root / source

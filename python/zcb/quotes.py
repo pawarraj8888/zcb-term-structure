@@ -26,8 +26,10 @@ class QuoteFormatError(ValueError):
 
 def parse_wsj_price(quote: float) -> float:
     """Convert a WSJ 32nds quote (e.g. 99.256) to a decimal price per 100 face."""
-    if quote is None or quote < 0:
+    if not isinstance(quote, (int, float)) or isinstance(quote, bool) or quote < 0:
         raise QuoteFormatError(f"Invalid WSJ price quote: {quote!r}")
+    if abs(quote * 1000 - round(quote * 1000)) > 1e-6:
+        raise QuoteFormatError(f"WSJ quotes have at most three decimals: {quote!r}")
     text = f"{quote:.3f}"
     whole_text, frac_text = text.split(".")
     thirty_seconds = int(frac_text[:2])

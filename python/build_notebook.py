@@ -32,8 +32,10 @@ from zcb.report import plot_zero_curve, plot_residuals, plot_discount_factors
 
 pd.set_option("display.width", 160)
 pd.set_option("display.max_columns", 30)
+import tempfile
 DATA = Path("../data/Treasury_data_090426.xlsx")
-OUT = Path("../output"); (OUT / "figures").mkdir(parents=True, exist_ok=True)"""),
+OUT = Path(tempfile.mkdtemp(prefix="zcb_notebook_"))  # scratch dir: the pipeline's output/ folder is written by run_analysis.py
+(OUT / "figures").mkdir(parents=True, exist_ok=True)"""),
     ("md", """## 1. Data: WSJ Treasury notes and bonds
 
 Prices are quoted in 32nds; the third decimal is eighths of a 32nd (`99.256` = 99 + 25.75/32).
@@ -65,8 +67,9 @@ Continuously compounded zero rate (Svensson 1994):
 $$r(t)=\beta_0+\beta_1\frac{1-e^{-t/\tau_1}}{t/\tau_1}+\beta_2\left(\frac{1-e^{-t/\tau_1}}{t/\tau_1}-e^{-t/\tau_1}\right)+\beta_3\left(\frac{1-e^{-t/\tau_2}}{t/\tau_2}-e^{-t/\tau_2}\right)$$
 
 Discount factor $d(t)=e^{-r(t)t}$; model dirty price of bond $i$ is $\sum_k CF_{ik}\,d(t_{ik})$.
-Parameters minimise $\sum_i \big[(P_i^{model}-P_i^{market})/D_i\big]^2$ (price errors scaled by modified
-duration, i.e. yield errors to first order), from 19 starting points on a $(\tau_1,\tau_2)$ grid, with
+Parameters minimise $\sum_i \big[(P_i^{model}-P_i^{market})/(P_i^{market} D_i)\big]^2$: each price error divided by
+dirty price times modified duration is the first-order yield error, so this is the sum of squared yield errors.
+The fit runs from 19 starting points on a $(\tau_1,\tau_2)$ grid, with
 $\beta_0\ge 0$. Nelson-Siegel ($\beta_3=0$) is fitted as a benchmark."""),
     ("code", """svensson = fit_term_structure(bonds, "svensson")
 nelson_siegel = fit_term_structure(bonds, "nelson_siegel")
@@ -76,7 +79,6 @@ summary[["n_bonds_in_fit", "weighted_sse", "price_rmse", "yield_rmse_bp", "yield
     ("code", """pd.Series(svensson.summary["params"], name="Svensson parameters").to_frame().round(6)"""),
     ("md", """## 4. Deliverable: discount rate for every Treasury payment date"""),
     ("code", """payments = payment_date_table(bonds, svensson.fit.params)
-payments.to_csv(OUT / "zero_curve_payment_dates.csv", index=False)
 print(f"{len(payments)} distinct payment dates, {payments.payment_date.iloc[0]} to {payments.payment_date.iloc[-1]}")
 pd.concat([payments.head(10), payments.tail(5)]).round(6)"""),
     ("code", """plot_zero_curve(svensson.bond_table, svensson.fit.params, sheet.quote_date, settlement, OUT / "figures/zero_curve.png")
