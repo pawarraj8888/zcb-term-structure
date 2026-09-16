@@ -1,0 +1,13 @@
+settlement_rule,settlement,price_format,rmse_bp,median_abs_bp,max_abs_bp
+T+1 business (regular way),2026-09-08,32nds + eighths,0.510694,0.0249617,2.85391
+T+1 business (regular way),2026-09-08,32nds + tenths,0.579407,0.0645125,5.4092
+T+2 business,2026-09-09,32nds + eighths,1.78132,0.052752,28.8738
+T+2 business,2026-09-09,32nds + tenths,2.12396,0.107522,28.8738
+T+1 calendar,2026-09-05,32nds + tenths,3.45191,0.0920737,46.2595
+T+1 calendar,2026-09-05,32nds + eighths,3.82863,0.121219,46.2595
+T+0 (quote date),2026-09-04,32nds + tenths,4.40758,0.127233,56.5302
+T+0 (quote date),2026-09-04,32nds + eighths,4.78228,0.153819,56.5302
+T+0 (quote date),2026-09-04,plain decimal,86.2197,7.40464,941.918
+T+1 calendar,2026-09-05,plain decimal,89.8205,7.43625,979.993
+T+1 business (regular way),2026-09-08,plain decimal,102.586,7.52149,1115
+T+2 business,2026-09-09,plain decimal,107.65,7.54993,1168.59

@@ -1,0 +1,27 @@
+{
+  "quote_date": "2026-09-04",
+  "settlement": "2026-09-08",
+  "model": "svensson",
+  "n_bonds_total": 353,
+  "n_bonds_in_fit": 339,
+  "min_years_in_fit": 0.25,
+  "price_side": "ask",
+  "params": {
+    "beta0": 1.0489727089952803e-13,
+    "beta1": 0.036276272710166396,
+    "beta2": 0.04472160627037652,
+    "beta3": 0.16228660688184837,
+    "tau1": 1.766098734619726,
+    "tau2": 15.991116636678136
+  },
+  "weighted_sse": 0.26126611193120997,
+  "price_rmse": 0.18529530123193572,
+  "price_mae": 0.10699027855879288,
+  "yield_rmse_bp": 2.8823362315725958,
+  "yield_mae_bp": 2.077475837112375,
+  "yield_max_abs_bp": 14.81788892239777,
+  "n_starts": 19,
+  "n_starts_at_optimum": 15,
+  "converged": true,
+  "bound_active_beta0": true
+}
