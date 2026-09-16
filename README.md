@@ -24,8 +24,9 @@ implemented twice, in Python and in Excel, with both implementations reproducing
 | Nelson-Siegel benchmark | 7.5 bp RMSE |
 | Zero curve | 3.63% (overnight), 4.14% (1y), 4.49% (5y), 4.79% (10y), 5.33% (20y), 5.31% (30y) |
 
-The one-page methodology is in [`writeup/`](writeup/Miniproject2_ZCB_Term_Structure_Writeup.md)
-(also as [PDF](writeup/Miniproject2_ZCB_Term_Structure_Writeup.pdf)).
+The write-up is in [`writeup/`](writeup/Miniproject2_ZCB_Term_Structure_Writeup.md): the
+[PDF](writeup/Miniproject2_ZCB_Term_Structure_Writeup.pdf) has the one-page methodology, a results page with the
+figure and parameter/fit tables, and an appendix listing the discount rate at all 245 payment dates.
 
 ## Repository layout
 
@@ -40,7 +41,7 @@ python/     zcb/                               package: quotes.py, bonds.py, cur
 notebooks/  Miniproject2_ZCB_Term_Structure.ipynb   executed walk-through notebook
 excel/      Miniproject2_ZCB_Term_Structure.xlsx    Excel implementation (Solver-ready)
 output/     zero_curve_payment_dates.csv, bond_fit.csv, results.json, figures/
-writeup/    one-page methodology (md, html, pdf)
+writeup/    write-up: methodology, figure, tables, payment-date appendix (md, html, pdf)
 docs/       GitHub Pages site
 ```
 
@@ -64,7 +65,7 @@ docs/       GitHub Pages site
 cd python
 python3 -m pip install -r requirements.txt
 python3 run_analysis.py --data ../data/Treasury_data_090426.xlsx --out ../output --site ../docs
-python3 write_methodology.py                  # writeup/*.md|html|txt|pdf from output/results.json (PDF via headless Chrome)
+python3 write_methodology.py                  # writeup/*.md|html|pdf from output/results.json (PDF via headless Chrome + KaTeX)
 python3 build_excel.py                        # excel/Miniproject2_ZCB_Term_Structure.xlsx
 ./recalc_excel_mac.sh && python3 verify_excel.py   # macOS + Excel: recalculate, then prove Excel == Python
 python3 build_notebook.py                     # executes notebooks/*.ipynb (writes only to a temp dir)

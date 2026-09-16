@@ -8,7 +8,7 @@ import json
 import shutil
 from pathlib import Path
 
-from write_methodology import build_paragraphs
+from write_methodology import build_sections
 
 DOWNLOADS = [
     ("excel/Miniproject2_ZCB_Term_Structure.xlsx", "Miniproject2_ZCB_Term_Structure.xlsx"),
@@ -18,6 +18,16 @@ DOWNLOADS = [
     ("data/Treasury_data_090426.xlsx", "Treasury_data_090426.xlsx"),
     ("output/figures/zero_curve.png", "zero_curve.png"),
 ]
+
+
+def _site_paragraph(section: dict) -> str:
+    """Join the paragraph parts; the PDF's display equations are omitted on the site."""
+    html = section["html"].rstrip()
+    if html.endswith(":"):
+        html = html[:-1] + "."
+    if section.get("after"):
+        html += " " + section["after"]
+    return html
 
 
 def main(argv=None) -> int:
@@ -30,7 +40,10 @@ def main(argv=None) -> int:
     files.mkdir(parents=True, exist_ok=True)
 
     results = json.loads((root / "output" / "results.json").read_text())
-    results["methodology"] = [{"heading": h, "text": t} for h, t in build_paragraphs(results)]
+    results["methodology"] = [
+        {"heading": sec["heading"], "html": _site_paragraph(sec)}
+        for sec in build_sections(results)
+    ]
     (docs / "data.js").write_text("window.ZCB_DATA = " + json.dumps(results, separators=(",", ":")) + ";\n")
     stale = docs / "data.json"
     if stale.exists():

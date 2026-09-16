@@ -219,7 +219,7 @@ footer{border-top:1px solid var(--border);padding:26px 0 40px;color:var(--fg-2);
 
   <section id="method" class="method">
     <h2>Methodology</h2>
-    <p class="sub">The one-page write-up submitted with the project (<a href="files/Miniproject2_ZCB_Term_Structure_Writeup.pdf">PDF</a>).</p>
+    <p class="sub">The methodology from the write-up submitted with the project. The <a href="files/Miniproject2_ZCB_Term_Structure_Writeup.pdf">PDF</a> adds the results figure, parameter and fit tables, and the appendix with all 245 payment dates.</p>
     <div class="card" id="method-body"></div>
   </section>
 
@@ -228,7 +228,7 @@ footer{border-top:1px solid var(--border);padding:26px 0 40px;color:var(--fg-2);
     <p class="sub">Everything needed to reproduce or grade the project.</p>
     <div class="downloads">
       <a class="dl" href="files/Miniproject2_ZCB_Term_Structure.xlsx"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>Excel implementation (.xlsx)</span><span class="d">Sheets Data, Bonds, CashFlows, Curve, Notes. Live formulas: 32nds conversion, coupon schedules, accrued, YIELD, Svensson pricing of every cash flow, Solver-ready objective, zero-curve table and chart.</span></a>
-      <a class="dl" href="files/Miniproject2_ZCB_Term_Structure_Writeup.pdf"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M8 13h8M8 17h8"/></svg>Methodology write-up (PDF)</span><span class="d">One page: data, conventions, model, estimation, results.</span></a>
+      <a class="dl" href="files/Miniproject2_ZCB_Term_Structure_Writeup.pdf"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M8 13h8M8 17h8"/></svg>Methodology write-up (PDF)</span><span class="d">One-page methodology with typeset equations, results page with figure and tables, appendix with the discount rate at every payment date.</span></a>
       <a class="dl" href="https://github.com/pawarraj8888/zcb-term-structure/blob/main/notebooks/Miniproject2_ZCB_Term_Structure.ipynb"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 4l-5 8 5 8M16 4l5 8-5 8"/></svg>Python notebook and package</span><span class="d">Executed Jupyter notebook plus the <code>zcb</code> package (quotes, bonds, curves, analysis) with 32 tests.</span></a>
       <a class="dl" href="files/zero_curve_payment_dates.csv"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h16v16H4zM4 10h16M4 15h16M10 4v16"/></svg>Zero curve table (CSV)</span><span class="d">r(t), d(t), f(t) at all payment dates.</span></a>
       <a class="dl" href="files/bond_fit.csv"><span class="t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h16v16H4zM4 10h16M4 15h16M10 4v16"/></svg>Bond fit table (CSV)</span><span class="d">Per-bond prices, accrued, yields, durations, model errors.</span></a>
@@ -369,8 +369,8 @@ footer{border-top:1px solid var(--border);padding:26px 0 40px;color:var(--fg-2);
   $('prof').innerHTML = D.beta0_profile.map(p=>`<tr><td>${f(p.beta0_fixed_pct,0)}%</td><td>${f(p.approx_yield_rmse_bp,2)}</td><td>${f(p['zero_1y_pct'],3)}</td><td>${f(p['zero_10y_pct'],3)}</td><td>${f(p['zero_30y_pct'],3)}</td></tr>`).join('');
 
   // ---- methodology
-  const esc = s => s.replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-  $('method-body').innerHTML = (D.methodology||[]).map(p=>`<p><strong>${esc(p.heading)}.</strong> ${esc(p.text)}</p>`).join('');
+  // methodology paragraphs are generated HTML (Greek letters, sub/superscripts) from write_methodology.py
+  $('method-body').innerHTML = (D.methodology||[]).map(p=>`<p><strong>${p.heading}.</strong> ${p.html}</p>`).join('');
 })();
 </script>
 </body>
