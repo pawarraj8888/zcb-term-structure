@@ -1,6 +1,6 @@
 # Miniproject 2 - Creating a ZCB Term Structure
 
-**FRE 6103 Valuation for Financial Engineering (NYU Tandon)** | Raj Pawar
+**FRE 6103 Valuation for Financial Engineering (NYU Tandon)** | Monalisa Maity (mm16178) and Raj Pawar (rsp9234)
 
 A continuously compounded zero-coupon (ZCB) term structure fitted to all 353 US Treasury note and bond
 quotes in the Wall Street Journal on Friday, September 4, 2026, using the Svensson (1994) functional

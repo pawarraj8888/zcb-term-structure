@@ -23,7 +23,7 @@ from zcb.curves import discount_factor, svensson_forward, svensson_zero  # noqa:
 
 TITLE = "Miniproject 2 - Creating a ZCB Term Structure"
 COURSE = "FRE 6103 Valuation for Financial Engineering, NYU Tandon"
-AUTHOR = "Raj Pawar"
+AUTHOR = "Monalisa Maity (mm16178) and Raj Pawar (rsp9234)"
 FIGURE = "../output/figures/zero_curve.png"
 SELECTED_MATURITIES = (0.25, 0.5, 1, 2, 3, 5, 7, 10, 15, 20, 25, 30)
 KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist"
