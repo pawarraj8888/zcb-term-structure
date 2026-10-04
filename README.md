@@ -1,3 +1,6 @@
+> **Moved.** This project now lives in [`valuation-assignments/miniproject-2-zcb-term-structure`](https://github.com/pawarraj8888/valuation-assignments/tree/main/miniproject-2-zcb-term-structure), together with the other FRE 6103 mini-projects. Dashboard: https://pawarraj8888.github.io/valuation-assignments/zcb-term-structure/
+> This repository is kept only so that old links keep working and is no longer updated.
+
 # Miniproject 2 - Creating a ZCB Term Structure
 
 **FRE 6103 Valuation for Financial Engineering (NYU Tandon)** | Monalisa Maity (mm16178) and Raj Pawar (rsp9234)
